@@ -45,6 +45,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <readline/readline.h>
+#include <readline/history.h>
+
 
 #define LINECAP 65535  // Maximum number of characters in one command (excluding newline)
 #define MAX_STEPS 20  // Maximum number of steps in a pipeline
@@ -98,12 +101,6 @@ void *malloc_or_exit(size_t n) {
 	return p;
 }
 
-void print_signal_safe(char *msg) {
-	// Use write() instead of printf() for code that is called from within a signal handler. printf() is not
-	// async-signal-safe.
-	write(1, msg, strlen(msg));
-}
-
 void trim_left(char **s) {
 	size_t length = strlen(*s);
 	for (size_t i = 0; i < length; i++) {
@@ -126,12 +123,6 @@ void trim(char **s) {
 	// Trim the left side first so that the pointer is left unchanged for all-whitespace strings
 	trim_right(s);
 	trim_left(s);
-}
-
-void print_prompt() {
-	print_signal_safe("[sish] ");
-	print_signal_safe(current_working_dir);
-	print_signal_safe(" > ");
 }
 
 
@@ -347,38 +338,6 @@ void delete_process(struct job **head, pid_t pid) {
 // ---------------------------------------------------------------------------------------------------------------------
 // User input
 // ---------------------------------------------------------------------------------------------------------------------
-/* Tries to read one line of input from the user. Exits if EOF is reached and returns false if an error occurred.
- */
-bool try_get_line(char **lineptr) {
-	// Reset errno so that we can tell whether the failure is due to reading EOF or something else
-	errno = 0;
-	size_t linecap = 0;
-
-	ssize_t length = getline(lineptr, &linecap, stdin);
-
-	if (length < 0 && errno == 0) {
-		// getline() probably failed because of EOF caused by user pressing ^D.
-		// If so, add a newline (keep parent shell from printing prompt on same line) and exit.
-		printf("\n");
-		if (*lineptr != NULL) free(*lineptr);
-		exit(EXIT_SUCCESS);
-	}
-	else if (length < 0) {
-		// A real error, not the user pressing ^D
-		fprintf(stderr, "Unknown error while reading input. Errno is %d\n", errno);
-		if (*lineptr != NULL) free(*lineptr);
-		return false;
-	}
-	else if (length - 1 > LINECAP) {
-		fprintf(stderr, "Error: Exceeded maximum line length (%d)\n", LINECAP);
-		if (*lineptr != NULL) free(*lineptr);
-		return false;
-	}
-	else {
-		return true;
-	}
-}
-
 // Parse user input with a state machine
 #define SH_SEEK_STEP 1
 #define SH_SEEK_TOKEN 2
@@ -741,9 +700,9 @@ bool try_parse_input(char *line, struct pipeline *ppl) {
 
 // Returns NULL on error.
 struct pipeline *input_pipeline() {
-	char *line = NULL;
-
-	if (!try_get_line(&line)) return NULL;
+	char *line = readline("[sish] > ");
+	// readline() reached EOL
+	if (line == NULL) exit(EXIT_SUCCESS);
 
 	struct pipeline *ppl = create_empty_pipeline();
 
@@ -997,17 +956,10 @@ void run_pipeline(struct pipeline *ppl) {
 void handle_sigint() {
 	// Each process in the current process group should receive SIGINT, so no need to send any kill signals manually
 
-	if (host_shell_pid == getpid()) {
-		// It's kind of ugly when the next prompt appears on the same line as the "^C"
-		print_signal_safe("\n");
-		// It's also nice to re-print the prompt is ^C was pressed while the shell was just waiting for input
-		if (waiting_for_input) print_prompt();
-	}
-	else {
-		// exit() is not async-signal-safe, so call _exit() directly. This skips the cleanup for sub-shells, but
-		// sub-shells should rarely receive SIGINT anyway (built-in commands are not long-running and it shouldn't take long to call exec() after forking).
-		_exit(EXIT_SUCCESS);
-	}
+	// exit() is not async-signal-safe, so call _exit() directly. This skips the cleanup for sub-shells, but sub-shells
+	// should rarely receive SIGINT anyway (built-in commands are not long-running and it shouldn't take long to call
+	// exec() after forking).
+	if (host_shell_pid != getpid()) _exit(EXIT_SUCCESS);
 }
 
 void bind_signal_handlers() {
@@ -1067,8 +1019,6 @@ int main() {
 	atexit(cleanup_at_exit);
 
 	while (true) {
-		print_prompt();
-
 		waiting_for_input = true;
 		global_pipeline = input_pipeline();
 		waiting_for_input = false;
