@@ -704,6 +704,10 @@ struct pipeline *input_pipeline() {
 	// readline() reached EOL
 	if (line == NULL) exit(EXIT_SUCCESS);
 
+	char *original_line = line;
+	trim(&line);
+	if (strlen(line) != 0) add_history(original_line);
+
 	struct pipeline *ppl = create_empty_pipeline();
 
 	if (!try_parse_input(line, ppl)) {
@@ -711,10 +715,7 @@ struct pipeline *input_pipeline() {
 		ppl = NULL;
 	}
 
-	// It's ok to free the original pointer because it's passed by value to the function and so isn't changed. If
-	// there's any chance the pointer can be changed (e.g. by something like strsep() or trim()), then I need to save a
-	// copy before modifying it.
-	free(line);
+	free(original_line);
 
 	return ppl;
 }
@@ -1030,9 +1031,6 @@ int main() {
 		}
 
 		if (global_pipeline == NULL) continue;
-
-		// TODO: How do you support arrow keys? If I can figure out how to handle arrow keys correctly, maybe save the
-		// command into a circular buffer to allow user to access command history.
 
 		run_pipeline(global_pipeline);
 
