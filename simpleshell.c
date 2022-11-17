@@ -1,3 +1,5 @@
+// TODO: Split into multiple files and create makefile
+// TODO: Move docs to README.md
 /* Simple Shell (sish)
  *
  * GENERAL COMMAND STRUCTURE
